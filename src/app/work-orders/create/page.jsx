@@ -65,18 +65,41 @@ export default function CreateWorkOrder() {
     const fetchStaffList = async () => {
       try {
         const response = await fetch('/api/users/staff');
-        if (response.ok) {
-          const data = await response.json();
+        const data = await response.json();
+        console.log('Staff API response:', data);
+        
+        // Determine the correct data structure
+        if (Array.isArray(data)) {
+          setStaffList(data);
+        } else if (data.users && Array.isArray(data.users)) {
           setStaffList(data.users);
+        } else if (data.data && Array.isArray(data.data)) {
+          setStaffList(data.data);
+        } else if (typeof data === 'object' && data !== null) {
+          // If it's an object with staff data in another format
+          // Try to extract an array of users if available
+          const possibleArrays = Object.values(data).filter(val => Array.isArray(val));
+          if (possibleArrays.length > 0) {
+            setStaffList(possibleArrays[0]);
+          } else {
+            // If we can't find an array in the response, create staff list from object keys
+            const staffArray = Object.entries(data).map(([id, details]) => {
+              // Handle if each entry is an object with name/email or just a string
+              if (typeof details === 'object') {
+                return { _id: id, name: details.name || details.fullName || details.username || id };
+              } else {
+                return { _id: id, name: details || id };
+              }
+            });
+            setStaffList(staffArray);
+          }
+        } else {
+          console.warn('Could not determine staff data format:', data);
+          setStaffList([]);
         }
       } catch (error) {
         console.error('Error fetching staff list:', error);
-        // Set dummy data for now
-        setStaffList([
-          { _id: '1', name: 'Staff User 1' },
-          { _id: '2', name: 'Staff User 2' },
-          { _id: '3', name: 'Staff User 3' },
-        ]);
+        setStaffList([]);
       }
     };
 
@@ -303,7 +326,7 @@ export default function CreateWorkOrder() {
                   className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
                 >
                   <option value="">Select Staff Member</option>
-                  {staffList.map((staff) => (
+                  {staffList && staffList.length > 0 && staffList.map((staff) => (
                     <option key={staff._id} value={staff._id}>
                       {staff.name}
                     </option>
