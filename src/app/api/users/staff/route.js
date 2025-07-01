@@ -24,7 +24,7 @@ export async function GET() {
       .select('name email')
       .sort({ name: 1 });
       
-    return NextResponse.json({ users });
+    return NextResponse.json({ staff: users });
   } catch (error) {
     console.error('Error getting staff users:', error);
     return NextResponse.json(
