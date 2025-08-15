@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../auth/[...nextauth]/route';
 import connectDB from '@/lib/mongodb';
 import Invoice from '@/models/Invoice';
+import { logActivity } from '@/lib/activityLogger';
 
 // GET - Single invoice
 export async function GET(request, { params }) {
@@ -13,7 +14,7 @@ export async function GET(request, { params }) {
       return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
     }
 
-    const { id } = params;
+    const { id } = await params;
     if (!id) {
       return NextResponse.json({ message: 'Invoice ID is required' }, { status: 400 });
     }
@@ -54,7 +55,7 @@ export async function PATCH(request, { params }) {
       return NextResponse.json({ message: 'Forbidden' }, { status: 403 });
     }
 
-    const { id } = params;
+    const { id } = await params;
     if (!id) {
       return NextResponse.json({ message: 'Invoice ID is required' }, { status: 400 });
     }
@@ -64,10 +65,21 @@ export async function PATCH(request, { params }) {
     await connectDB();
 
     // Get the existing invoice
-    const invoice = await Invoice.findById(id);
+    const invoice = await Invoice.findById(id).populate('workOrder');
     if (!invoice) {
       return NextResponse.json({ message: 'Invoice not found' }, { status: 404 });
     }
+
+    // Store old values for logging
+    const oldValues = {
+      invoiceNumber: invoice.invoiceNumber,
+      totalClientPayment: invoice.totalClientPayment,
+      totalMaterialCost: invoice.totalMaterialCost,
+      totalLaborCost: invoice.totalLaborCost,
+      totalUtilityCost: invoice.totalUtilityCost,
+      revenue: invoice.revenue,
+      status: invoice.status,
+    };
 
     // Calculate totals
     let totalClientPayment = 0;
@@ -117,6 +129,39 @@ export async function PATCH(request, { params }) {
     .populate('createdBy', 'name email')
     .populate('updatedBy', 'name email');
 
+    // Log the update activity
+    const changedFields = [];
+    const newValues = {};
+    
+    Object.keys(data).forEach(key => {
+      if (oldValues[key] !== undefined && oldValues[key] !== data[key]) {
+        changedFields.push(key);
+        newValues[key] = data[key];
+      }
+    });
+
+    // Also check calculated fields
+    if (oldValues.totalClientPayment !== totalClientPayment) {
+      changedFields.push('totalClientPayment');
+      newValues.totalClientPayment = totalClientPayment;
+    }
+    if (oldValues.revenue !== revenue) {
+      changedFields.push('revenue');
+      newValues.revenue = revenue;
+    }
+
+    if (changedFields.length > 0) {
+      await logActivity({
+        userId: session.user.id,
+        action: data.status !== oldValues.status ? 'status_change' : 'update',
+        entityType: 'Invoice',
+        entityId: id,
+        description: `Updated invoice ${invoice.invoiceNumber}: ${changedFields.join(', ')}`,
+        oldValues: Object.fromEntries(changedFields.map(field => [field, oldValues[field]])),
+        newValues: Object.fromEntries(changedFields.map(field => [field, newValues[field] !== undefined ? newValues[field] : (field === 'totalClientPayment' ? totalClientPayment : revenue)])),
+      });
+    }
+
     return NextResponse.json({
       message: 'Invoice updated successfully',
       invoice: updatedInvoice
@@ -144,19 +189,37 @@ export async function DELETE(request, { params }) {
       return NextResponse.json({ message: 'Forbidden' }, { status: 403 });
     }
 
-    const { id } = params;
+    const { id } = await params;
     if (!id) {
       return NextResponse.json({ message: 'Invoice ID is required' }, { status: 400 });
     }
 
     await connectDB();
 
-    // Delete the invoice
-    const result = await Invoice.findByIdAndDelete(id);
-
-    if (!result) {
+    // Get the invoice before deleting for logging
+    const invoice = await Invoice.findById(id).populate('workOrder');
+    if (!invoice) {
       return NextResponse.json({ message: 'Invoice not found' }, { status: 404 });
     }
+
+    // Log the deletion activity before deleting
+    await logActivity({
+      userId: session.user.id,
+      action: 'delete',
+      entityType: 'Invoice',
+      entityId: invoice._id,
+      description: `Deleted invoice ${invoice.invoiceNumber}${invoice.workOrder ? ` for work order ${invoice.workOrder.workOrderNumber}` : ''}`,
+      oldValues: {
+        invoiceNumber: invoice.invoiceNumber,
+        workOrderNumber: invoice.workOrder?.workOrderNumber,
+        totalClientPayment: invoice.totalClientPayment,
+        revenue: invoice.revenue,
+        status: invoice.status,
+      },
+    });
+
+    // Delete the invoice
+    const result = await Invoice.findByIdAndDelete(id);
 
     return NextResponse.json({ message: 'Invoice deleted successfully' });
   } catch (error) {

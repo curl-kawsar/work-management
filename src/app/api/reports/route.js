@@ -25,6 +25,7 @@ export async function GET(request) {
     const startDate = searchParams.get('startDate');
     const endDate = searchParams.get('endDate');
     const staffId = searchParams.get('staffId');
+    const companyName = searchParams.get('companyName');
 
     // Build date filter
     let dateFilter = {};
@@ -43,7 +44,13 @@ export async function GET(request) {
       staffFilter = { assignedStaff: staffId };
     }
 
-    const combinedFilter = { ...dateFilter, ...staffFilter };
+    // Build company filter
+    let companyFilter = {};
+    if (companyName && companyName !== 'all') {
+      companyFilter = { companyName: companyName };
+    }
+
+    const combinedFilter = { ...dateFilter, ...staffFilter, ...companyFilter };
 
     switch (reportType) {
       case 'overview':

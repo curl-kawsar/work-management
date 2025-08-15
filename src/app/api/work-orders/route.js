@@ -1,12 +1,14 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]/route';
+import mongoose from 'mongoose';
 import path from 'path';
 import fs from 'fs';
 import { writeFile, mkdir } from 'fs/promises';
 import connectDB from '@/lib/mongodb';
 import WorkOrder from '@/models/WorkOrder';
 import User from '@/models/User';
+import { logActivity } from '@/lib/activityLogger';
 
 // Helper function to save uploaded files
 async function saveFiles(files, workOrderNumber) {
@@ -59,7 +61,8 @@ export async function GET(request) {
     // For staff users, only show their assigned work orders
     let query = {};
     if (session.user.role === 'staff') {
-      query.assignedStaff = session.user.id;
+      // Ensure proper ObjectId comparison
+      query.assignedStaff = new mongoose.Types.ObjectId(session.user.id);
     }
     
     // Get work orders
@@ -68,6 +71,19 @@ export async function GET(request) {
       .populate('createdBy', 'name email')
       .populate('updatedBy', 'name email')
       .populate('assignedStaff', 'name email');
+    
+    // Debug: Log work orders for staff users
+    if (session.user.role === 'staff') {
+      console.log('Staff work orders result:', {
+        count: workOrders.length,
+        userId: session.user.id,
+        workOrderIds: workOrders.map(wo => wo._id),
+        assignments: workOrders.map(wo => ({
+          id: wo._id,
+          assignedStaff: wo.assignedStaff?._id || wo.assignedStaff
+        }))
+      });
+    }
       
     return NextResponse.json({ workOrders });
   } catch (error) {
@@ -88,25 +104,56 @@ export async function POST(request) {
       return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
     }
     
-    // Parse the form data
-    const formData = await request.formData();
+    // Check content type and parse accordingly
+    const contentType = request.headers.get('content-type');
+    let data;
+    let files = [];
     
-    // Extract files
-    const files = formData.getAll('files');
+    if (contentType && contentType.includes('application/json')) {
+      // Handle JSON request (new file management approach)
+      data = await request.json();
+    } else {
+      // Handle FormData request (legacy approach with files)
+      const formData = await request.formData();
+      
+      // Extract files
+      files = formData.getAll('files');
+      
+      // Extract other form fields
+      data = {
+        workOrderNumber: formData.get('workOrderNumber'),
+        details: formData.get('details'),
+        address: formData.get('address'),
+        workType: formData.get('workType'),
+        scheduleDate: formData.get('scheduleDate'),
+        dueDate: formData.get('dueDate'),
+        clientName: formData.get('clientName'),
+        companyName: formData.get('companyName'),
+        nte: formData.get('nte'),
+        assignedStaff: formData.get('assignedStaff'),
+        notes: formData.get('notes'),
+        status: formData.get('status'),
+        createdBy: formData.get('createdBy'),
+      };
+    }
     
-    // Extract other form fields
-    const workOrderNumber = formData.get('workOrderNumber');
-    const details = formData.get('details');
-    const address = formData.get('address');
-    const workType = formData.get('workType');
-    const scheduleDate = formData.get('scheduleDate');
-    const dueDate = formData.get('dueDate');
-    const clientName = formData.get('clientName');
-    const companyName = formData.get('companyName');
-    const nte = formData.get('nte');
-    let assignedStaff = formData.get('assignedStaff');
-    const notes = formData.get('notes');
-    const status = formData.get('status');
+    // Extract fields from data object
+    const {
+      workOrderNumber,
+      details,
+      address,
+      workType,
+      scheduleDate,
+      dueDate,
+      clientName,
+      companyName,
+      nte,
+      notes,
+      status,
+      createdBy
+    } = data;
+    
+    let { assignedStaff } = data;
     
     // Validate required fields
     if (!workOrderNumber || !details || !address || !workType ||
@@ -133,7 +180,7 @@ export async function POST(request) {
       assignedStaff = session.user.id;
     }
     
-    // Handle file uploads if any
+    // Handle file uploads if any (for FormData requests)
     let mediaFiles = [];
     if (files && files.length > 0 && files[0].size > 0) {
       mediaFiles = await saveFiles(files, workOrderNumber);
@@ -141,7 +188,9 @@ export async function POST(request) {
     
     // Create initial note with timestamp
     const initialNote = {
-      message: notes,
+      message: notes || 'Work order created',
+      type: 'created',
+      priority: 'normal',
       timestamp: new Date(),
       user: session.user.id
     };
@@ -161,8 +210,25 @@ export async function POST(request) {
       media: mediaFiles,
       notes: [initialNote],
       status,
-      createdBy: session.user.id,
+      createdBy: createdBy || session.user.id,
       updatedBy: session.user.id,
+    });
+
+    // Log the creation activity
+    await logActivity({
+      userId: session.user.id,
+      action: 'create',
+      entityType: 'WorkOrder',
+      entityId: workOrder._id,
+      description: `Created work order ${workOrderNumber} for ${clientName}`,
+      newValues: {
+        workOrderNumber,
+        clientName,
+        companyName,
+        workType,
+        status,
+        assignedStaff: assignedStaff || null,
+      },
     });
     
     return NextResponse.json(

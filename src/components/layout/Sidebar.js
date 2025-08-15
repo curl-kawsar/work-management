@@ -1,12 +1,12 @@
 "use client";
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { 
-  LayoutDashboard, 
-  Briefcase, 
-  FileText, 
-  BarChart3, 
-  Users, 
+import {
+  LayoutDashboard,
+  Briefcase,
+  FileText,
+  BarChart3,
+  Users,
   Settings,
   LogOut,
   Bell,
@@ -14,7 +14,8 @@ import {
   Circle,
   Grid,
   LineChart,
-  ChevronRight
+  ChevronRight,
+  Activity
 } from 'lucide-react';
 import { signOut } from 'next-auth/react';
 import { useState } from 'react';
@@ -241,6 +242,27 @@ export default function Sidebar({ role, userName = "User" }) {
                   </span>
                   {!collapsed && (
                     <span className="text-sm font-medium">User Management</span>
+                  )}
+                </Link>
+              </li>
+            )}
+
+            {/* Activity Logs (Admin Only) */}
+            {role === 'admin' && (
+              <li>
+                <Link
+                  href="/activity-logs"
+                  className={`flex items-center gap-3 px-3 py-2 rounded-md ${
+                    pathname === '/activity-logs' || pathname.startsWith('/activity-logs/')
+                    ? 'bg-blue-50 text-blue-600'
+                    : 'text-gray-700 hover:bg-gray-50'
+                  } ${collapsed ? 'justify-center' : ''}`}
+                >
+                  <span className={pathname.startsWith('/activity-logs') ? 'text-blue-600' : 'text-gray-500'}>
+                    <Activity size={20} />
+                  </span>
+                  {!collapsed && (
+                    <span className="text-sm font-medium">Activity Logs</span>
                   )}
                 </Link>
               </li>

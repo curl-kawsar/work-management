@@ -31,21 +31,47 @@ import {
 } from 'recharts';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { exportToPDF, exportToExcel } from '@/components/reports/ExportUtils';
+import { 
+  useReport, 
+  useCompanies, 
+  useExportReport,
+  REPORT_TYPES 
+} from '@/hooks/useReports';
+import { useStaffUsers } from '@/hooks/useUsers';
 
 export default function ReportsPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
   
-  const [reportData, setReportData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState('overview');
   const [filters, setFilters] = useState({
     startDate: format(startOfMonth(new Date()), 'yyyy-MM-dd'),
     endDate: format(endOfMonth(new Date()), 'yyyy-MM-dd'),
-    staffId: 'all'
+    staffId: 'all',
+    companyName: 'all'
   });
-  const [staffList, setStaffList] = useState([]);
+
+  // Tanstack Query hooks
+  const { 
+    data: reportData, 
+    isLoading: loading, 
+    error: queryError,
+    refetch: fetchReportData
+  } = useReport(activeTab, filters, {
+    enabled: session?.user?.role === 'admin'
+  });
+  
+  const { data: staffList = [] } = useStaffUsers({
+    enabled: session?.user?.role === 'admin'
+  });
+  
+  const { data: companiesList = [] } = useCompanies({
+    enabled: session?.user?.role === 'admin'
+  });
+
+  const exportMutation = useExportReport();
+  
+  const error = queryError?.message;
 
   // Redirect if not admin
   useEffect(() => {
@@ -56,59 +82,7 @@ export default function ReportsPage() {
     }
   }, [session, status, router]);
 
-  // Fetch staff list for filter
-  useEffect(() => {
-    const fetchStaff = async () => {
-      try {
-        const response = await fetch('/api/users/staff');
-        if (response.ok) {
-          const data = await response.json();
-          setStaffList(data.staff || []);
-        }
-      } catch (error) {
-        console.error('Error fetching staff:', error);
-      }
-    };
-
-    if (session?.user?.role === 'admin') {
-      fetchStaff();
-    }
-  }, [session]);
-
-  // Fetch report data
-  const fetchReportData = async () => {
-    setLoading(true);
-    setError('');
-    
-    try {
-      const params = new URLSearchParams({
-        type: activeTab,
-        startDate: filters.startDate,
-        endDate: filters.endDate,
-        staffId: filters.staffId
-      });
-
-      const response = await fetch(`/api/reports?${params}`);
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch report data');
-      }
-
-      const data = await response.json();
-      setReportData(data);
-    } catch (err) {
-      console.error('Error fetching report data:', err);
-      setError('Failed to load report data. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (session?.user?.role === 'admin') {
-      fetchReportData();
-    }
-  }, [session, activeTab, filters]);
+  // Data is now handled by Tanstack Query hooks
 
   const handleFilterChange = (key, value) => {
     setFilters(prev => ({ ...prev, [key]: value }));
@@ -127,11 +101,12 @@ export default function ReportsPage() {
       return;
     }
 
-    if (format === 'pdf') {
-      exportToPDF(reportData, activeTab, filters);
-    } else if (format === 'excel') {
-      exportToExcel(reportData, activeTab, filters);
-    }
+    exportMutation.mutate({
+      reportData,
+      reportType: activeTab,
+      filters,
+      format
+    });
   };
 
   const tabs = [
@@ -164,10 +139,11 @@ export default function ReportsPage() {
             <div className="flex items-center space-x-4">
               <h2 className="text-lg font-semibold text-gray-900">Report Filters</h2>
               <button
-                onClick={fetchReportData}
-                className="flex items-center space-x-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                onClick={() => fetchReportData()}
+                disabled={loading}
+                className="flex items-center space-x-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <RefreshCw size={16} />
+                <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
                 <span>Refresh</span>
               </button>
             </div>
@@ -201,6 +177,22 @@ export default function ReportsPage() {
                   {staffList.map(staff => (
                     <option key={staff._id} value={staff._id}>
                       {staff.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <Filter size={16} className="text-gray-500" />
+                <select
+                  value={filters.companyName}
+                  onChange={(e) => handleFilterChange('companyName', e.target.value)}
+                  className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="all">All Companies</option>
+                  {companiesList.map(company => (
+                    <option key={company} value={company}>
+                      {company}
                     </option>
                   ))}
                 </select>

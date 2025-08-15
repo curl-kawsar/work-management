@@ -31,7 +31,7 @@ export async function POST(request) {
       name,
       email,
       password,
-      role: 'admin', // Default role is staff
+      role: 'staff', // Default role is staff
     });
 
     // Remove password from the response

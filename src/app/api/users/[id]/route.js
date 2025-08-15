@@ -19,7 +19,7 @@ export async function GET(request, { params }) {
       return NextResponse.json({ message: 'Forbidden' }, { status: 403 });
     }
     
-    const { id } = params;
+    const { id } = await params;
     
     // Validate ObjectId
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -59,7 +59,7 @@ export async function PUT(request, { params }) {
       return NextResponse.json({ message: 'Forbidden' }, { status: 403 });
     }
     
-    const { id } = params;
+    const { id } = await params;
     
     // Validate ObjectId
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -152,7 +152,7 @@ export async function DELETE(request, { params }) {
       return NextResponse.json({ message: 'Forbidden' }, { status: 403 });
     }
     
-    const { id } = params;
+    const { id } = await params;
     
     // Validate ObjectId
     if (!mongoose.Types.ObjectId.isValid(id)) {

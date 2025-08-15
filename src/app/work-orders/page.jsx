@@ -4,75 +4,124 @@ import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import CreateWorkOrderButton from '@/components/work-orders/CreateWorkOrderButton';
-import { Search, Edit, Trash2, Eye, ArrowUpDown } from 'lucide-react';
-import { format } from 'date-fns';
+import DeleteWorkOrderModal from '@/components/work-orders/DeleteWorkOrderModal';
+import StaffWorkOrderCard from '@/components/staff/StaffWorkOrderCard';
+import StaffNotifications from '@/components/staff/StaffNotifications';
+import { Search, Edit, Trash2, Eye, ArrowUpDown, Filter, Grid, List, Bell, Calendar, Clock, CheckCircle, AlertTriangle } from 'lucide-react';
+import { format, isToday, isTomorrow, isPast } from 'date-fns';
+import { useWorkOrders, useUpdateWorkOrder } from '@/hooks/useWorkOrders';
 
 export default function WorkOrders() {
   const { data: session } = useSession();
-  const [workOrders, setWorkOrders] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [priorityFilter, setPriorityFilter] = useState('all');
+  const [viewMode, setViewMode] = useState('cards'); // 'cards' or 'table'
+  const [showNotifications, setShowNotifications] = useState(false);
   const [sortConfig, setSortConfig] = useState({
     key: 'createdAt',
     direction: 'desc'
   });
+  const [deleteModal, setDeleteModal] = useState({
+    isOpen: false,
+    workOrder: null,
+  });
 
-  useEffect(() => {
-    const fetchWorkOrders = async () => {
-      try {
-        const response = await fetch('/api/work-orders');
-        if (response.ok) {
-          const data = await response.json();
-          setWorkOrders(data.workOrders);
-        } else {
-          throw new Error('Failed to fetch work orders');
-        }
-      } catch (error) {
-        console.error('Error fetching work orders:', error);
-        
-        // Sample data for development
-        setWorkOrders([
-          {
-            _id: '1',
-            workOrderNumber: 'WO-2023-001',
-            clientName: 'ABC Company',
-            companyName: 'ABC Inc.',
-            workType: 'Repair',
-            status: 'Ongoing',
-            scheduleDate: '2023-06-15T00:00:00.000Z',
-            dueDate: '2023-06-20T00:00:00.000Z',
-            createdAt: '2023-06-10T00:00:00.000Z',
-          },
-          {
-            _id: '2',
-            workOrderNumber: 'WO-2023-002',
-            clientName: 'XYZ Corporation',
-            companyName: 'XYZ Corp',
-            workType: 'Installation',
-            status: 'Completed',
-            scheduleDate: '2023-06-05T00:00:00.000Z',
-            dueDate: '2023-06-10T00:00:00.000Z',
-            createdAt: '2023-06-01T00:00:00.000Z',
-          },
-          {
-            _id: '3',
-            workOrderNumber: 'WO-2023-003',
-            clientName: 'Acme Corp',
-            companyName: 'Acme Inc.',
-            workType: 'Maintenance',
-            status: 'Created',
-            scheduleDate: '2023-06-25T00:00:00.000Z',
-            dueDate: '2023-06-30T00:00:00.000Z',
-            createdAt: '2023-06-20T00:00:00.000Z',
-          }
-        ]);
-      } finally {
-        setLoading(false);
+  const isStaff = session?.user?.role === 'staff';
+  const isAdmin = session?.user?.role === 'admin';
+
+  // Tanstack Query hooks - API handles role-based filtering automatically
+  const { 
+    data: workOrders = [], 
+    isLoading: loading, 
+    refetch: refreshWorkOrders 
+  } = useWorkOrders();
+
+  const updateWorkOrderMutation = useUpdateWorkOrder();
+
+  // Enhanced filtering for staff
+  const getWorkOrderPriority = (workOrder) => {
+    const dueDate = new Date(workOrder.dueDate);
+    const today = new Date();
+    const daysUntilDue = Math.ceil((dueDate - today) / (1000 * 60 * 60 * 24));
+
+    if (workOrder.status === 'Completed') return 'low';
+    if (daysUntilDue < 0) return 'high'; // Overdue
+    if (daysUntilDue <= 1) return 'high'; // Due today or tomorrow
+    if (daysUntilDue <= 3) return 'medium'; // Due within 3 days
+    return 'low';
+  };
+
+  // Enhanced filtering
+  const filteredWorkOrders = workOrders.filter(workOrder => {
+    // Search filter
+    if (searchTerm) {
+      const searchLower = searchTerm.toLowerCase();
+      const matchesSearch = (
+        workOrder.workOrderNumber.toLowerCase().includes(searchLower) ||
+        workOrder.clientName.toLowerCase().includes(searchLower) ||
+        workOrder.companyName.toLowerCase().includes(searchLower) ||
+        workOrder.workType.toLowerCase().includes(searchLower) ||
+        workOrder.address.toLowerCase().includes(searchLower)
+      );
+      if (!matchesSearch) return false;
+    }
+
+    // Status filter
+    if (statusFilter !== 'all') {
+      if (statusFilter === 'overdue') {
+        const isOverdue = isPast(new Date(workOrder.dueDate)) && workOrder.status !== 'Completed';
+        if (!isOverdue) return false;
+      } else if (statusFilter === 'today') {
+        const isDueToday = isToday(new Date(workOrder.dueDate)) || isToday(new Date(workOrder.scheduleDate));
+        if (!isDueToday) return false;
+      } else if (workOrder.status !== statusFilter) {
+        return false;
       }
-    };
+    }
 
-    fetchWorkOrders();
-  }, []);
+    // Priority filter
+    if (priorityFilter !== 'all') {
+      const priority = getWorkOrderPriority(workOrder);
+      if (priority !== priorityFilter) return false;
+    }
+
+    return true;
+  });
+
+  // Handle quick status update for staff
+  const handleQuickStatusUpdate = async (workOrderId, newStatus) => {
+    try {
+      await updateWorkOrderMutation.mutateAsync({
+        id: workOrderId,
+        data: { status: newStatus }
+      });
+    } catch (error) {
+      console.error('Error updating status:', error);
+    }
+  };
+
+  // Handle quick progress update for staff
+  const handleQuickProgress = async (workOrderId, progressData) => {
+    try {
+      const workOrder = workOrders.find(wo => wo._id === workOrderId);
+      const updatedNotes = [
+        ...(workOrder.notes || []),
+        {
+          ...progressData,
+          user: session.user.id,
+          timestamp: new Date(),
+        }
+      ];
+
+      await updateWorkOrderMutation.mutateAsync({
+        id: workOrderId,
+        data: { notes: updatedNotes }
+      });
+    } catch (error) {
+      console.error('Error adding progress:', error);
+    }
+  };
 
   // Handle sorting
   const handleSort = (key) => {
@@ -83,27 +132,30 @@ export default function WorkOrders() {
     setSortConfig({ key, direction });
   };
 
-  // Delete work order
-  const handleDelete = async (id) => {
-    if (confirm('Are you sure you want to delete this work order? This action cannot be undone.')) {
-      try {
-        const response = await fetch(`/api/work-orders/${id}`, {
-          method: 'DELETE',
-        });
+  // Open delete modal
+  const handleDeleteClick = (workOrder) => {
+    setDeleteModal({
+      isOpen: true,
+      workOrder: workOrder,
+    });
+  };
 
-        if (response.ok) {
-          // Remove the deleted work order from the UI
-          setWorkOrders((prevOrders) => prevOrders.filter(wo => wo._id !== id));
-        } else {
-          // Handle error response
-          const errorData = await response.json();
-          alert(errorData.message || 'Failed to delete work order');
-        }
-      } catch (error) {
-        console.error('Error deleting work order:', error);
-        alert('An error occurred while deleting the work order');
-      }
-    }
+  // Handle successful deletion
+  const handleDeleteSuccess = (deletedId) => {
+    // Refresh the work orders list
+    refreshWorkOrders();
+    setDeleteModal({
+      isOpen: false,
+      workOrder: null,
+    });
+  };
+
+  // Close delete modal
+  const handleCloseDeleteModal = () => {
+    setDeleteModal({
+      isOpen: false,
+      workOrder: null,
+    });
   };
 
   // Sort and filter work orders
@@ -273,7 +325,7 @@ export default function WorkOrders() {
                                   <button
                                     className="text-red-600 hover:text-red-900"
                                     title="Delete"
-                                    onClick={() => handleDelete(wo._id)}
+                                    onClick={() => handleDeleteClick(wo)}
                                   >
                                     <Trash2 size={18} />
                                   </button>
@@ -296,7 +348,24 @@ export default function WorkOrders() {
             </div>
           )}
         </div>
+
+        {/* Notifications Modal for Staff */}
+        {isStaff && (
+          <StaffNotifications
+            workOrders={workOrders}
+            isOpen={showNotifications}
+            onClose={() => setShowNotifications(false)}
+          />
+        )}
+
+        {/* Delete Confirmation Modal */}
+        <DeleteWorkOrderModal
+          workOrder={deleteModal.workOrder}
+          isOpen={deleteModal.isOpen}
+          onClose={handleCloseDeleteModal}
+          onDelete={handleDeleteSuccess}
+        />
       </div>
     </DashboardLayout>
   );
-} 
+}

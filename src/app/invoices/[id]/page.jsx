@@ -5,7 +5,9 @@ import { useParams, useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { format } from 'date-fns';
 import DashboardLayout from '@/components/layout/DashboardLayout';
-import { Edit, ArrowLeft, FileText } from 'lucide-react';
+import { Edit, ArrowLeft, FileText, Trash2 } from 'lucide-react';
+import DeleteInvoiceModal from '@/components/invoices/DeleteInvoiceModal';
+import { useDeleteInvoice } from '@/hooks/useInvoices';
 
 export default function InvoiceDetail() {
   const params = useParams();
@@ -14,6 +16,10 @@ export default function InvoiceDetail() {
   const [invoice, setInvoice] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+
+  // Tanstack Query hooks
+  const deleteInvoiceMutation = useDeleteInvoice();
   
   useEffect(() => {
     const fetchInvoice = async () => {
@@ -81,6 +87,28 @@ export default function InvoiceDetail() {
     };
     return methods[method] || method;
   };
+
+  // Handle delete
+  const handleDeleteClick = () => {
+    setDeleteModalOpen(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    try {
+      await deleteInvoiceMutation.mutateAsync(invoice._id);
+      router.push('/invoices');
+    } catch (error) {
+      console.error('Error deleting invoice:', error);
+      // Error handling is managed by the mutation
+    }
+  };
+
+  const handleDeleteCancel = () => {
+    setDeleteModalOpen(false);
+  };
+
+  // Check if user is admin
+  const isAdmin = session?.user?.role === 'admin';
   
   // Format expense type
   const formatExpenseType = (type) => {
@@ -175,6 +203,16 @@ export default function InvoiceDetail() {
                 <Edit size={16} className="mr-2" />
                 Edit Invoice
               </Link>
+            )}
+            {isAdmin && (
+              <button
+                onClick={handleDeleteClick}
+                className="flex items-center px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded"
+                title="Delete Invoice (Admin Only)"
+              >
+                <Trash2 size={16} className="mr-2" />
+                Delete Invoice
+              </button>
             )}
             <Link
               href={`/api/invoices/${invoice._id}/pdf`}
@@ -367,6 +405,15 @@ export default function InvoiceDetail() {
             <p className="text-gray-700 whitespace-pre-line">{invoice.notes}</p>
           </div>
         )}
+
+        {/* Delete Confirmation Modal */}
+        <DeleteInvoiceModal
+          invoice={invoice}
+          isOpen={deleteModalOpen}
+          onClose={handleDeleteCancel}
+          onConfirm={handleDeleteConfirm}
+          isDeleting={deleteInvoiceMutation.isPending}
+        />
       </div>
     </DashboardLayout>
   );

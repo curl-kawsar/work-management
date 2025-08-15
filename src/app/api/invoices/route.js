@@ -4,6 +4,7 @@ import { authOptions } from '../auth/[...nextauth]/route';
 import connectDB from '@/lib/mongodb';
 import Invoice from '@/models/Invoice';
 import WorkOrder from '@/models/WorkOrder';
+import { logActivity } from '@/lib/activityLogger';
 
 // GET - List all invoices
 export async function GET(request) {
@@ -95,6 +96,22 @@ export async function POST(request) {
       notes: data.notes || '',
       createdBy: session.user.id,
       updatedBy: session.user.id,
+    });
+
+    // Log the creation activity
+    await logActivity({
+      userId: session.user.id,
+      action: 'create',
+      entityType: 'Invoice',
+      entityId: invoice._id,
+      description: `Created invoice ${data.invoiceNumber} for work order ${workOrder.workOrderNumber}`,
+      newValues: {
+        invoiceNumber: data.invoiceNumber,
+        workOrderNumber: workOrder.workOrderNumber,
+        totalClientPayment: data.totalClientPayment || 0,
+        revenue: data.revenue,
+        status: data.status || 'draft',
+      },
     });
     
     return NextResponse.json(

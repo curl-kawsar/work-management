@@ -7,6 +7,9 @@ import * as yup from 'yup';
 import { useSession } from 'next-auth/react';
 import { Upload, Plus, X } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
+import FileManager from '@/components/files/FileManager';
+import { useStaffUsers } from '@/hooks/useUsers';
+import { useCreateWorkOrder } from '@/hooks/useWorkOrders';
 
 // Form validation schema
 const schema = yup.object().shape({
@@ -46,11 +49,15 @@ const workTypeOptions = [
 export default function CreateWorkOrder() {
   const router = useRouter();
   const { data: session, status } = useSession();
-  const [staffList, setStaffList] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-  const [selectedFiles, setSelectedFiles] = useState([]);
-  const [isUploading, setIsUploading] = useState(false);
+  const [workOrderNumber, setWorkOrderNumber] = useState('');
+  const [showFileManager, setShowFileManager] = useState(false);
+
+  // Tanstack Query hooks
+  const { data: staffList = [], isLoading: isLoadingStaff } = useStaffUsers({
+    enabled: session?.user?.role === 'admin'
+  });
+  const createWorkOrderMutation = useCreateWorkOrder();
   
   const { register, handleSubmit, formState: { errors }, reset } = useForm({
     resolver: yupResolver(schema),
@@ -60,131 +67,56 @@ export default function CreateWorkOrder() {
     }
   });
 
-  // Fetch staff list for admin assignment
-  useEffect(() => {
-    const fetchStaffList = async () => {
-      try {
-        const response = await fetch('/api/users/staff');
-        const data = await response.json();
-        console.log('Staff API response:', data);
-        
-        // Determine the correct data structure
-        if (Array.isArray(data)) {
-          setStaffList(data);
-        } else if (data.users && Array.isArray(data.users)) {
-          setStaffList(data.users);
-        } else if (data.data && Array.isArray(data.data)) {
-          setStaffList(data.data);
-        } else if (typeof data === 'object' && data !== null) {
-          // If it's an object with staff data in another format
-          // Try to extract an array of users if available
-          const possibleArrays = Object.values(data).filter(val => Array.isArray(val));
-          if (possibleArrays.length > 0) {
-            setStaffList(possibleArrays[0]);
-          } else {
-            // If we can't find an array in the response, create staff list from object keys
-            const staffArray = Object.entries(data).map(([id, details]) => {
-              // Handle if each entry is an object with name/email or just a string
-              if (typeof details === 'object') {
-                return { _id: id, name: details.name || details.fullName || details.username || id };
-              } else {
-                return { _id: id, name: details || id };
-              }
-            });
-            setStaffList(staffArray);
-          }
-        } else {
-          console.warn('Could not determine staff data format:', data);
-          setStaffList([]);
-        }
-      } catch (error) {
-        console.error('Error fetching staff list:', error);
-        setStaffList([]);
-      }
-    };
+  // Staff list is now handled by the useStaffUsers hook
 
-    // Only fetch staff list if user is admin
-    if (session?.user?.role === 'admin') {
-      fetchStaffList();
-    }
-  }, [session?.user?.role]);
-
-  // Handle file selection
-  const handleFileChange = (e) => {
-    if (e.target.files) {
-      const filesArray = Array.from(e.target.files);
-      setSelectedFiles((prevFiles) => [...prevFiles, ...filesArray]);
-    }
-  };
-
-  // Remove file from selection
-  const removeFile = (index) => {
-    setSelectedFiles((prevFiles) => prevFiles.filter((_, i) => i !== index));
+  // Generate a default work order number
+  const generateWorkOrderNumber = () => {
+    const date = new Date();
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+    return `WO-${year}${month}-${random}`;
   };
 
   // Handle form submission
   const onSubmit = async (data) => {
-    setIsLoading(true);
     setError('');
 
     try {
-      // Create FormData for file uploads
-      const formData = new FormData();
-      
-      // Append all form fields
-      Object.keys(data).forEach((key) => {
-        formData.append(key, data[key]);
-      });
-      
-      // Append files
-      selectedFiles.forEach((file) => {
-        formData.append('files', file);
-      });
-
-      // Add the current user as creator
-      formData.append('createdBy', session?.user?.id);
+      // Create JSON payload instead of FormData (files are handled separately now)
+      const workOrderData = {
+        ...data,
+        createdBy: session?.user?.id,
+      };
       
       // Set staff assignment based on role
       if (session?.user?.role === 'staff') {
-        formData.append('assignedStaff', session.user.id);
+        workOrderData.assignedStaff = session.user.id;
       }
 
-      // Send the request
-      const response = await fetch('/api/work-orders', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to create work order');
+      const result = await createWorkOrderMutation.mutateAsync(workOrderData);
+      
+      // Show file manager for uploading files after work order creation
+      if (result.workOrder) {
+        setShowFileManager(true);
+        setWorkOrderNumber(result.workOrder.workOrderNumber);
+      } else {
+        // If no files to upload, redirect immediately
+        router.push('/work-orders');
+        router.refresh();
       }
-
-      // Redirect to work orders list
-      router.push('/work-orders');
-      router.refresh();
       
     } catch (err) {
       console.error('Error creating work order:', err);
       setError(err.message || 'An error occurred while creating the work order');
-    } finally {
-      setIsLoading(false);
     }
   };
 
-  // Generate a default work order number
+  // Initialize form with default values
   useEffect(() => {
-    const generateWorkOrderNumber = () => {
-      const date = new Date();
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, '0');
-      const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-      return `WO-${year}${month}-${random}`;
-    };
-
+    const defaultWorkOrderNumber = generateWorkOrderNumber();
     reset({ 
-      ...reset(),
-      workOrderNumber: generateWorkOrderNumber(),
+      workOrderNumber: defaultWorkOrderNumber,
       status: 'Created'
     });
   }, [reset]);
@@ -409,57 +341,17 @@ export default function CreateWorkOrder() {
             )}
           </div>
 
-          {/* File Upload */}
-          <div className="mb-6">
-            <label className="block text-gray-700 text-sm font-bold mb-2">
-              Upload Photos/Videos
-            </label>
-            <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-md">
-              <div className="space-y-1 text-center">
-                <Upload className="mx-auto h-12 w-12 text-gray-400" />
-                <div className="flex text-sm text-gray-600">
-                  <label htmlFor="files" className="relative cursor-pointer bg-white rounded-md font-medium text-blue-600 hover:text-blue-500 focus-within:outline-none">
-                    <span>Upload files</span>
-                    <input 
-                      id="files" 
-                      name="files" 
-                      type="file" 
-                      multiple 
-                      className="sr-only"
-                      onChange={handleFileChange}
-                      accept="image/*,video/*"
-                    />
-                  </label>
-                  <p className="pl-1">or drag and drop</p>
-                </div>
-                <p className="text-xs text-gray-500">PNG, JPG, GIF, MP4 up to 10MB</p>
+          {/* File Upload Note */}
+          <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-md">
+            <div className="flex items-start">
+              <Upload className="h-5 w-5 text-blue-600 mt-0.5 mr-2" />
+              <div>
+                <h3 className="text-sm font-medium text-blue-800">File Upload</h3>
+                <p className="text-sm text-blue-700 mt-1">
+                  After creating the work order, you'll be able to upload photos, videos, and documents.
+                </p>
               </div>
             </div>
-            
-            {/* Selected Files Preview */}
-            {selectedFiles.length > 0 && (
-              <div className="mt-4">
-                <h4 className="text-sm font-medium text-gray-700">Selected Files:</h4>
-                <ul className="mt-2 divide-y divide-gray-200">
-                  {selectedFiles.map((file, index) => (
-                    <li key={index} className="py-2 flex justify-between items-center">
-                      <div className="flex items-center">
-                        <span className="ml-2 text-sm text-gray-700 truncate">
-                          {file.name} ({(file.size / 1024).toFixed(1)} KB)
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => removeFile(index)}
-                        className="text-red-500 hover:text-red-700"
-                      >
-                        <X size={16} />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
           </div>
 
           {/* Error Message */}
@@ -473,10 +365,10 @@ export default function CreateWorkOrder() {
           <div className="flex items-center justify-between">
             <button
               type="submit"
-              disabled={isLoading || isUploading}
-              className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline"
+              disabled={createWorkOrderMutation.isPending}
+              className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isLoading ? 'Creating...' : 'Create Work Order'}
+              {createWorkOrderMutation.isPending ? 'Creating...' : 'Create Work Order'}
             </button>
             <button
               type="button"
@@ -487,6 +379,73 @@ export default function CreateWorkOrder() {
             </button>
           </div>
         </form>
+
+        {/* File Manager Modal - Show after work order creation */}
+        {showFileManager && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg max-w-4xl w-full max-h-full overflow-hidden">
+              <div className="p-6 border-b">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-lg font-semibold text-gray-900">
+                    Upload Files for Work Order: {workOrderNumber}
+                  </h2>
+                  <button
+                    onClick={() => {
+                      setShowFileManager(false);
+                      router.push('/work-orders');
+                      router.refresh();
+                    }}
+                    className="text-gray-500 hover:text-gray-700"
+                  >
+                    <X size={24} />
+                  </button>
+                </div>
+              </div>
+              
+              <div className="p-6">
+                <FileManager
+                  workOrderNumber={workOrderNumber}
+                  showUpload={true}
+                  showGallery={false}
+                  title=""
+                  onUploadSuccess={() => {
+                    // Optional: show success message
+                  }}
+                />
+              </div>
+              
+              <div className="p-6 border-t bg-gray-50">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-gray-600">
+                    You can upload files now or skip and add them later.
+                  </p>
+                  <div className="flex items-center space-x-3">
+                    <button
+                      onClick={() => {
+                        setShowFileManager(false);
+                        router.push('/work-orders');
+                        router.refresh();
+                      }}
+                      className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50"
+                    >
+                      Skip for Now
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowFileManager(false);
+                        router.push(`/work-orders/${workOrderNumber}`);
+                        router.refresh();
+                      }}
+                      className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                    >
+                      View Work Order
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </DashboardLayout>
   );

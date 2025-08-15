@@ -4,6 +4,7 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import DashboardLayout from '@/components/layout/DashboardLayout';
+import BackupManager from '@/components/admin/BackupManager';
 import { 
   BarChart, 
   CheckCircle, 
@@ -19,27 +20,26 @@ import {
   ChevronRight
 } from 'lucide-react';
 import { format, parseISO, subDays } from 'date-fns';
+import { useWorkOrdersMetrics } from '@/hooks/useWorkOrders';
+import { useInvoicesMetrics } from '@/hooks/useInvoices';
+import { useUsersMetrics, useStaffPerformance } from '@/hooks/useUsers';
 
 export default function AdminDashboard() {
   const { data: session, status } = useSession();
   const router = useRouter();
-  const [metrics, setMetrics] = useState({
-    totalWorkOrders: 0,
-    completedWorkOrders: 0,
-    pendingWorkOrders: 0,
-    totalInvoices: 0,
-    totalRevenue: 0,
-    totalUsers: 0,
-    staffCount: 0,
-  });
-  const [staffPerformance, setStaffPerformance] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [sortConfig, setSortConfig] = useState({
     key: 'name',
     direction: 'asc'
   });
+
+  // Tanstack Query hooks
+  const { data: workOrderMetrics = {}, isLoading: loadingWorkOrders } = useWorkOrdersMetrics();
+  const { data: invoiceMetrics = {}, isLoading: loadingInvoices } = useInvoicesMetrics();
+  const { data: userMetrics = {}, isLoading: loadingUsers } = useUsersMetrics();
+  const { data: staffPerformanceData = { staffPerformance: [], summary: {} }, isLoading: loadingStaffPerformance } = useStaffPerformance();
+
+  const loading = loadingWorkOrders || loadingInvoices || loadingUsers || loadingStaffPerformance;
 
   useEffect(() => {
     // Redirect if not authenticated or not admin
@@ -50,137 +50,8 @@ export default function AdminDashboard() {
     }
   }, [session, status, router]);
 
-  useEffect(() => {
-    const fetchAdminMetrics = async () => {
-      if (!session?.user?.id || session?.user?.role !== 'admin') return;
-      
-      try {
-        setLoading(true);
-        
-        // Initialize default values
-        let workOrders = [];
-        let invoices = [];
-        let users = [];
-        
-        // Fetch work orders
-        try {
-          const workOrdersResponse = await fetch('/api/work-orders');
-          if (workOrdersResponse.ok) {
-            const workOrdersData = await workOrdersResponse.json();
-            workOrders = workOrdersData.workOrders || [];
-          } else {
-            console.error('Failed to fetch work orders:', await workOrdersResponse.text());
-          }
-        } catch (err) {
-          console.error('Error fetching work orders:', err);
-        }
-        
-        // Fetch invoices
-        try {
-          const invoicesResponse = await fetch('/api/invoices');
-          if (invoicesResponse.ok) {
-            const invoicesData = await invoicesResponse.json();
-            invoices = invoicesData.invoices || [];
-          } else {
-            console.error('Failed to fetch invoices:', await invoicesResponse.text());
-          }
-        } catch (err) {
-          console.error('Error fetching invoices:', err);
-        }
-        
-        // Fetch users
-        try {
-          const usersResponse = await fetch('/api/users');
-          if (usersResponse.ok) {
-            const usersData = await usersResponse.json();
-            users = usersData.users || [];
-          } else {
-            console.error('Failed to fetch users:', await usersResponse.text());
-          }
-        } catch (err) {
-          console.error('Error fetching users:', err);
-        }
-        
-        // Calculate metrics
-        const completed = workOrders.filter(wo => wo.status === 'Completed').length;
-        const pending = workOrders.filter(wo => wo.status !== 'Completed' && wo.status !== 'Cancelled').length;
-        const staffUsers = users.filter(user => user.role === 'staff');
-        
-        // Calculate total revenue from invoices
-        const totalRevenue = invoices.reduce((sum, invoice) => sum + (invoice.revenue || 0), 0);
-        
-        // Calculate staff performance metrics
-        const staffMetrics = staffUsers.map(staff => {
-          const staffWorkOrders = workOrders.filter(wo => wo.assignedStaff === staff._id);
-          const completedOrders = staffWorkOrders.filter(wo => wo.status === 'Completed').length;
-          const completionRate = staffWorkOrders.length > 0 
-            ? (completedOrders / staffWorkOrders.length) * 100 
-            : 0;
-          
-          return {
-            _id: staff._id,
-            name: staff.name,
-            email: staff.email,
-            totalAssigned: staffWorkOrders.length,
-            completed: completedOrders,
-            completionRate: Math.round(completionRate),
-          };
-        });
-        
-        setMetrics({
-          totalWorkOrders: workOrders.length,
-          completedWorkOrders: completed,
-          pendingWorkOrders: pending,
-          totalInvoices: invoices.length,
-          totalRevenue: totalRevenue,
-          totalUsers: users.length,
-          staffCount: staffUsers.length,
-        });
-        
-        setStaffPerformance(staffMetrics);
-        
-      } catch (err) {
-        console.error('Error fetching admin metrics:', err);
-        setError('Failed to load dashboard data. Please try refreshing the page.');
-        
-        // Set sample data for development
-        setMetrics({
-          totalWorkOrders: 45,
-          completedWorkOrders: 32,
-          pendingWorkOrders: 13,
-          totalInvoices: 28,
-          totalRevenue: 15750,
-          totalUsers: 8,
-          staffCount: 6,
-        });
-        
-        setStaffPerformance([
-          {
-            _id: '1',
-            name: 'John Doe',
-            email: 'john@example.com',
-            totalAssigned: 15,
-            completed: 12,
-            completionRate: 80,
-          },
-          {
-            _id: '2',
-            name: 'Jane Smith',
-            email: 'jane@example.com',
-            totalAssigned: 18,
-            completed: 15,
-            completionRate: 83,
-          },
-        ]);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    if (session?.user?.id && session?.user?.role === 'admin') {
-      fetchAdminMetrics();
-    }
-  }, [session]);
+  // Get staff performance data from the API
+  const staffPerformance = staffPerformanceData.staffPerformance || [];
 
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat('en-US', {
@@ -208,16 +79,6 @@ export default function AdminDashboard() {
     );
   }
 
-  if (error) {
-    return (
-      <DashboardLayout title="Admin Dashboard">
-        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
-          {error}
-        </div>
-      </DashboardLayout>
-    );
-  }
-
   return (
     <DashboardLayout title="Admin Dashboard">
       <div className="space-y-6">
@@ -236,7 +97,7 @@ export default function AdminDashboard() {
             <div className="flex justify-between">
               <div>
                 <p className="text-gray-500 text-sm">Total Work Orders</p>
-                <h3 className="text-3xl font-bold">{metrics.totalWorkOrders}</h3>
+                <h3 className="text-3xl font-bold">{workOrderMetrics.total || 0}</h3>
               </div>
               <div className="bg-blue-100 p-3 rounded-full">
                 <Wrench size={24} className="text-blue-600" />
@@ -246,13 +107,13 @@ export default function AdminDashboard() {
               <div>
                 <span className="text-green-600 flex items-center">
                   <CheckCircle size={14} className="mr-1" />
-                  {metrics.completedWorkOrders} Completed
+                  {workOrderMetrics.completed || 0} Completed
                 </span>
               </div>
               <div>
                 <span className="text-yellow-600 flex items-center">
                   <Clock size={14} className="mr-1" />
-                  {metrics.pendingWorkOrders} Pending
+                  {(workOrderMetrics.created || 0) + (workOrderMetrics.ongoing || 0)} Pending
                 </span>
               </div>
             </div>
@@ -263,7 +124,7 @@ export default function AdminDashboard() {
             <div className="flex justify-between">
               <div>
                 <p className="text-gray-500 text-sm">Total Invoices</p>
-                <h3 className="text-3xl font-bold">{metrics.totalInvoices}</h3>
+                <h3 className="text-3xl font-bold">{invoiceMetrics.total || 0}</h3>
               </div>
               <div className="bg-green-100 p-3 rounded-full">
                 <FileText size={24} className="text-green-600" />
@@ -271,7 +132,7 @@ export default function AdminDashboard() {
             </div>
             <div className="mt-4">
               <p className="text-gray-600 text-sm">
-                Revenue: <span className="font-semibold">{formatCurrency(metrics.totalRevenue)}</span>
+                Revenue: <span className="font-semibold">{formatCurrency(invoiceMetrics.totalRevenue || 0)}</span>
               </p>
             </div>
           </div>
@@ -281,7 +142,7 @@ export default function AdminDashboard() {
             <div className="flex justify-between">
               <div>
                 <p className="text-gray-500 text-sm">Total Users</p>
-                <h3 className="text-3xl font-bold">{metrics.totalUsers}</h3>
+                <h3 className="text-3xl font-bold">{userMetrics.total || 0}</h3>
               </div>
               <div className="bg-purple-100 p-3 rounded-full">
                 <Users size={24} className="text-purple-600" />
@@ -289,7 +150,7 @@ export default function AdminDashboard() {
             </div>
             <div className="mt-4">
               <p className="text-gray-600 text-sm">
-                Staff Members: <span className="font-semibold">{metrics.staffCount}</span>
+                Staff Members: <span className="font-semibold">{userMetrics.staff || 0}</span>
               </p>
             </div>
           </div>
@@ -317,7 +178,16 @@ export default function AdminDashboard() {
         <div className="bg-white rounded-lg shadow">
           <div className="p-5 border-b border-gray-200">
             <div className="flex justify-between items-center">
-              <h3 className="text-lg font-medium">Staff Performance</h3>
+              <div>
+                <h3 className="text-lg font-medium">Staff Performance</h3>
+                {staffPerformanceData.summary && (
+                  <p className="text-sm text-gray-600 mt-1">
+                    {staffPerformanceData.summary.totalStaff} staff members • 
+                    {staffPerformanceData.summary.averageCompletionRate}% avg completion rate • 
+                    {staffPerformanceData.summary.totalCompleted}/{staffPerformanceData.summary.totalWorkOrdersAssigned} completed
+                  </p>
+                )}
+              </div>
               <Link 
                 href="/users" 
                 className="text-sm text-blue-600 hover:text-blue-800 flex items-center"
@@ -364,7 +234,7 @@ export default function AdminDashboard() {
                       onClick={() => handleSort('totalAssigned')}
                     >
                       <div className="flex items-center">
-                        Assigned
+                        Total
                         <ArrowUpDown size={14} className="ml-1" />
                       </div>
                     </th>
@@ -379,12 +249,24 @@ export default function AdminDashboard() {
                     </th>
                     <th 
                       className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                      onClick={() => handleSort('ongoing')}
+                    >
+                      <div className="flex items-center">
+                        Ongoing
+                        <ArrowUpDown size={14} className="ml-1" />
+                      </div>
+                    </th>
+                    <th 
+                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
                       onClick={() => handleSort('completionRate')}
                     >
                       <div className="flex items-center">
                         Completion Rate
                         <ArrowUpDown size={14} className="ml-1" />
                       </div>
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Recent Activity
                     </th>
                   </tr>
                 </thead>
@@ -412,20 +294,35 @@ export default function AdminDashboard() {
                           <div className="text-sm text-gray-500">{staff.email}</div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-sm text-gray-900">{staff.totalAssigned}</div>
+                          <div className="text-sm text-gray-900">{staff.totalAssigned || 0}</div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-sm text-gray-900">{staff.completed}</div>
+                          <div className="text-sm text-gray-900">{staff.completed || 0}</div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm text-gray-900">{staff.ongoing || 0}</div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex items-center">
-                            <div className="w-full bg-gray-200 rounded-full h-2.5 mr-2 w-24">
+                            <div className="w-16 bg-gray-200 rounded-full h-2.5 mr-2">
                               <div 
-                                className="bg-blue-600 h-2.5 rounded-full" 
-                                style={{ width: `${staff.completionRate}%` }}
+                                className={`h-2.5 rounded-full ${
+                                  (staff.completionRate || 0) >= 80 ? 'bg-green-500' :
+                                  (staff.completionRate || 0) >= 60 ? 'bg-yellow-500' :
+                                  'bg-red-500'
+                                }`}
+                                style={{ width: `${staff.completionRate || 0}%` }}
                               ></div>
                             </div>
-                            <span className="text-sm text-gray-900">{staff.completionRate}%</span>
+                            <span className="text-sm text-gray-900">{staff.completionRate || 0}%</span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm text-gray-900">
+                            {staff.recentActivity?.totalRecent || 0} recent
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {staff.recentActivity?.recentCompleted || 0} completed
                           </div>
                         </td>
                       </tr>
@@ -482,8 +379,11 @@ export default function AdminDashboard() {
               <p className="text-sm text-gray-500">Access system reports and analytics</p>
             </div>
           </Link>
-        </div>
+                </div>
       </div>
+
+      {/* Backup Management */}
+      <BackupManager />
     </DashboardLayout>
   );
 } 

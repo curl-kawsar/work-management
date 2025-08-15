@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../auth/[...nextauth]/route';
 import connectDB from '@/lib/mongodb';
 import WorkOrder from '@/models/WorkOrder';
+import { logActivity } from '@/lib/activityLogger';
 import path from 'path';
 import fs from 'fs';
 
@@ -15,7 +16,7 @@ export async function GET(request, { params }) {
       return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
     }
 
-    const { id } = params;
+    const { id } = await params;
     if (!id) {
       return NextResponse.json({ message: 'Work order ID is required' }, { status: 400 });
     }
@@ -58,7 +59,7 @@ export async function PATCH(request, { params }) {
       return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
     }
 
-    const { id } = params;
+    const { id } = await params;
     if (!id) {
       return NextResponse.json({ message: 'Work order ID is required' }, { status: 400 });
     }
@@ -72,13 +73,25 @@ export async function PATCH(request, { params }) {
     }
 
     // Check permissions: admin or assigned staff
-    if (session.user.role !== 'admin' && 
+    if (session.user.role !== 'admin' &&
         (workOrder.assignedStaff?.toString() !== session.user.id)) {
       return NextResponse.json({ message: 'Access denied' }, { status: 403 });
     }
 
     // Parse request body
     const data = await request.json();
+    
+    // Store old values for logging
+    const oldValues = {
+      status: workOrder.status,
+      assignedStaff: workOrder.assignedStaff,
+      details: workOrder.details,
+      address: workOrder.address,
+      workType: workOrder.workType,
+      scheduleDate: workOrder.scheduleDate,
+      dueDate: workOrder.dueDate,
+      nte: workOrder.nte,
+    };
     
     // If it's a staff user, they can't change certain fields
     if (session.user.role === 'staff') {
@@ -87,11 +100,46 @@ export async function PATCH(request, { params }) {
       delete data.workOrderNumber;
     }
 
+    // Validate notes structure if present
+    if (data.notes) {
+      if (typeof data.notes === 'string') {
+        // Convert string to proper note object
+        data.notes = [
+          ...(workOrder.notes || []),
+          {
+            message: data.notes,
+            type: 'note',
+            priority: 'normal',
+            timestamp: new Date(),
+            user: session.user.id
+          }
+        ];
+      } else if (Array.isArray(data.notes)) {
+        // Ensure all notes have proper structure
+        data.notes = data.notes.map(note => {
+          if (typeof note === 'string') {
+            return {
+              message: note,
+              type: 'note',
+              priority: 'normal',
+              timestamp: new Date(),
+              user: session.user.id
+            };
+          }
+          return {
+            ...note,
+            timestamp: note.timestamp || new Date(),
+            user: note.user || session.user.id
+          };
+        });
+      }
+    }
+
     // Update the work order
     const updatedWorkOrder = await WorkOrder.findByIdAndUpdate(
       id,
-      { 
-        ...data, 
+      {
+        ...data,
         updatedBy: session.user.id,
         updatedAt: new Date()
       },
@@ -100,6 +148,26 @@ export async function PATCH(request, { params }) {
     .populate('createdBy', 'name email')
     .populate('updatedBy', 'name email')
     .populate('assignedStaff', 'name email');
+
+    // Log the update activity
+    const changedFields = [];
+    Object.keys(data).forEach(key => {
+      if (oldValues[key] !== data[key]) {
+        changedFields.push(key);
+      }
+    });
+
+    if (changedFields.length > 0) {
+      await logActivity({
+        userId: session.user.id,
+        action: data.status !== oldValues.status ? 'status_change' : 'update',
+        entityType: 'WorkOrder',
+        entityId: id,
+        description: `Updated work order ${workOrder.workOrderNumber}: ${changedFields.join(', ')}`,
+        oldValues: Object.fromEntries(changedFields.map(field => [field, oldValues[field]])),
+        newValues: Object.fromEntries(changedFields.map(field => [field, data[field]])),
+      });
+    }
 
     return NextResponse.json({
       message: 'Work order updated successfully',
@@ -128,7 +196,7 @@ export async function DELETE(request, { params }) {
       return NextResponse.json({ message: 'Forbidden' }, { status: 403 });
     }
 
-    const { id } = params;
+    const { id } = await params;
     if (!id) {
       return NextResponse.json({ message: 'Work order ID is required' }, { status: 400 });
     }
@@ -158,6 +226,23 @@ export async function DELETE(request, { params }) {
         }
       }
     }
+
+    // Log the deletion activity before deleting
+    await logActivity({
+      userId: session.user.id,
+      action: 'delete',
+      entityType: 'WorkOrder',
+      entityId: workOrder._id,
+      description: `Deleted work order ${workOrder.workOrderNumber} for ${workOrder.clientName}`,
+      oldValues: {
+        workOrderNumber: workOrder.workOrderNumber,
+        clientName: workOrder.clientName,
+        companyName: workOrder.companyName,
+        workType: workOrder.workType,
+        status: workOrder.status,
+        assignedStaff: workOrder.assignedStaff,
+      },
+    });
 
     // Delete the work order
     await WorkOrder.findByIdAndDelete(id);

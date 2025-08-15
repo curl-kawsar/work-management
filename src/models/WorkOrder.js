@@ -5,6 +5,31 @@ const activitySchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  type: {
+    type: String,
+    enum: ['created', 'progress', 'issue', 'completion', 'status_change', 'assignment', 'note', 'milestone'],
+    default: 'note',
+  },
+  priority: {
+    type: String,
+    enum: ['low', 'normal', 'high', 'critical'],
+    default: 'normal',
+  },
+  progress: {
+    type: Number,
+    min: 0,
+    max: 100,
+    default: null, // Optional progress percentage
+  },
+  tags: [{
+    type: String,
+  }],
+  attachments: [{
+    name: String,
+    path: String,
+    size: Number,
+    type: String,
+  }],
   timestamp: {
     type: Date,
     default: Date.now,
