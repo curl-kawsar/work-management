@@ -173,6 +173,68 @@ async function getFinancialReport(filter) {
     .sort((a, b) => b.revenue - a.revenue)
     .slice(0, 10);
 
+  // Company-wise financial breakdown for enhanced Excel export
+  const companyFinancials = {};
+  invoices.forEach(inv => {
+    const companyName = inv.workOrder?.companyName || 'Unknown Company';
+    
+    if (!companyFinancials[companyName]) {
+      companyFinancials[companyName] = {
+        companyName,
+        totalRevenue: 0,
+        totalIncomingPayment: 0,
+        totalMaterialCost: 0,
+        totalLaborCost: 0,
+        totalUtilityCost: 0,
+        totalExpenses: 0,
+        totalProfit: 0,
+        workOrderCount: 0,
+        invoiceNumbers: [],
+        workOrderNumbers: []
+      };
+    }
+
+    const company = companyFinancials[companyName];
+    company.totalRevenue += inv.revenue || 0;
+    company.totalIncomingPayment += inv.totalClientPayment || 0;
+    company.totalMaterialCost += inv.totalMaterialCost || 0;
+    company.totalLaborCost += inv.totalLaborCost || 0;
+    company.totalUtilityCost += inv.totalUtilityCost || 0;
+    company.totalExpenses += (inv.totalMaterialCost || 0) + (inv.totalLaborCost || 0) + (inv.totalUtilityCost || 0);
+    company.totalProfit = company.totalRevenue - company.totalExpenses;
+    company.workOrderCount++;
+    
+    if (inv.invoiceNumber && !company.invoiceNumbers.includes(inv.invoiceNumber)) {
+      company.invoiceNumbers.push(inv.invoiceNumber);
+    }
+    
+    if (inv.workOrder?.workOrderNumber && !company.workOrderNumbers.includes(inv.workOrder.workOrderNumber)) {
+      company.workOrderNumbers.push(inv.workOrder.workOrderNumber);
+    }
+  });
+
+  // Convert to array and sort by total revenue
+  const companyFinancialsArray = Object.values(companyFinancials)
+    .sort((a, b) => b.totalRevenue - a.totalRevenue);
+
+  // Detailed invoice breakdown for Excel export
+  const detailedInvoices = invoices.map(inv => ({
+    invoiceNumber: inv.invoiceNumber,
+    workOrderNumber: inv.workOrder?.workOrderNumber || '',
+    clientName: inv.workOrder?.clientName || '',
+    companyName: inv.workOrder?.companyName || 'Unknown Company',
+    revenue: inv.revenue || 0,
+    incomingPayment: inv.totalClientPayment || 0,
+    materialCost: inv.totalMaterialCost || 0,
+    laborCost: inv.totalLaborCost || 0,
+    utilityCost: inv.totalUtilityCost || 0,
+    totalExpenses: (inv.totalMaterialCost || 0) + (inv.totalLaborCost || 0) + (inv.totalUtilityCost || 0),
+    profit: (inv.revenue || 0) - ((inv.totalMaterialCost || 0) + (inv.totalLaborCost || 0) + (inv.totalUtilityCost || 0)),
+    status: inv.status,
+    issueDate: inv.issueDate,
+    dueDate: inv.dueDate
+  }));
+
   return NextResponse.json({
     financial: {
       totalRevenue,
@@ -187,7 +249,9 @@ async function getFinancialReport(filter) {
     revenueByMonth,
     expenseBreakdown,
     topClients,
-    recentInvoices: invoices.slice(0, 10)
+    recentInvoices: invoices.slice(0, 10),
+    companyFinancials: companyFinancialsArray,
+    detailedInvoices
   });
 }
 

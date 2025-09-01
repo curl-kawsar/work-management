@@ -315,7 +315,7 @@ const exportOverviewToExcel = (workbook, data) => {
 };
 
 const exportFinancialToExcel = (workbook, data) => {
-  const { financial, revenueByMonth, expenseBreakdown, topClients, recentInvoices } = data;
+  const { financial, revenueByMonth, expenseBreakdown, topClients, recentInvoices, companyFinancials, detailedInvoices } = data;
 
   // Financial metrics sheet
   const financialData = [
@@ -332,6 +332,110 @@ const exportFinancialToExcel = (workbook, data) => {
 
   const financialSheet = XLSX.utils.aoa_to_sheet(financialData);
   XLSX.utils.book_append_sheet(workbook, financialSheet, 'Financial Summary');
+
+  // Company-wise financial breakdown sheet (NEW - Main requested feature)
+  if (companyFinancials && companyFinancials.length > 0) {
+    const companyData = [
+      [
+        'Company Name',
+        'Incoming Payment',
+        'Total Revenue (Earned)',
+        'Material Expenses',
+        'Labor Expenses', 
+        'Utility Expenses',
+        'Total Expenses',
+        'Net Profit',
+        'Work Orders Count',
+        'Profit Margin %'
+      ],
+      ...companyFinancials.map(company => [
+        company.companyName,
+        company.totalIncomingPayment,
+        company.totalRevenue,
+        company.totalMaterialCost,
+        company.totalLaborCost,
+        company.totalUtilityCost,
+        company.totalExpenses,
+        company.totalProfit,
+        company.workOrderCount,
+        company.totalIncomingPayment > 0 ? ((company.totalProfit / company.totalIncomingPayment) * 100).toFixed(2) : 0
+      ]),
+      [], // Empty row for totals
+      [
+        'TOTALS:',
+        companyFinancials.reduce((sum, company) => sum + company.totalIncomingPayment, 0),
+        companyFinancials.reduce((sum, company) => sum + company.totalRevenue, 0),
+        companyFinancials.reduce((sum, company) => sum + company.totalMaterialCost, 0),
+        companyFinancials.reduce((sum, company) => sum + company.totalLaborCost, 0),
+        companyFinancials.reduce((sum, company) => sum + company.totalUtilityCost, 0),
+        companyFinancials.reduce((sum, company) => sum + company.totalExpenses, 0),
+        companyFinancials.reduce((sum, company) => sum + company.totalProfit, 0),
+        companyFinancials.reduce((sum, company) => sum + company.workOrderCount, 0),
+        ''
+      ]
+    ];
+
+    const companySheet = XLSX.utils.aoa_to_sheet(companyData);
+    XLSX.utils.book_append_sheet(workbook, companySheet, 'Company Financials');
+  }
+
+  // Detailed invoice breakdown sheet (NEW - All invoice details)
+  if (detailedInvoices && detailedInvoices.length > 0) {
+    const detailedData = [
+      [
+        'Invoice Number',
+        'Work Order Number',
+        'Client Name',
+        'Company Name',
+        'Incoming Payment',
+        'Revenue (Earned)',
+        'Material Cost',
+        'Labor Cost',
+        'Utility Cost',
+        'Total Expenses',
+        'Net Profit',
+        'Status',
+        'Issue Date',
+        'Due Date'
+      ],
+      ...detailedInvoices.map(invoice => [
+        invoice.invoiceNumber,
+        invoice.workOrderNumber,
+        invoice.clientName,
+        invoice.companyName,
+        invoice.incomingPayment,
+        invoice.revenue,
+        invoice.materialCost,
+        invoice.laborCost,
+        invoice.utilityCost,
+        invoice.totalExpenses,
+        invoice.profit,
+        invoice.status,
+        new Date(invoice.issueDate).toLocaleDateString(),
+        new Date(invoice.dueDate).toLocaleDateString()
+      ]),
+      [], // Empty row for totals
+      [
+        'TOTALS:',
+        '',
+        '',
+        '',
+        detailedInvoices.reduce((sum, inv) => sum + inv.incomingPayment, 0),
+        detailedInvoices.reduce((sum, inv) => sum + inv.revenue, 0),
+        detailedInvoices.reduce((sum, inv) => sum + inv.materialCost, 0),
+        detailedInvoices.reduce((sum, inv) => sum + inv.laborCost, 0),
+        detailedInvoices.reduce((sum, inv) => sum + inv.utilityCost, 0),
+        detailedInvoices.reduce((sum, inv) => sum + inv.totalExpenses, 0),
+        detailedInvoices.reduce((sum, inv) => sum + inv.profit, 0),
+        '',
+        '',
+        ''
+      ]
+    ];
+
+    const detailedSheet = XLSX.utils.aoa_to_sheet(detailedData);
+    XLSX.utils.book_append_sheet(workbook, detailedSheet, 'Detailed Invoices');
+  }
 
   // Revenue by month sheet
   if (revenueByMonth && revenueByMonth.length > 0) {
@@ -355,7 +459,7 @@ const exportFinancialToExcel = (workbook, data) => {
     XLSX.utils.book_append_sheet(workbook, clientsSheet, 'Top Clients');
   }
 
-  // Recent invoices sheet
+  // Recent invoices sheet (keeping original for comparison)
   if (recentInvoices && recentInvoices.length > 0) {
     const invoicesData = [
       ['Invoice Number', 'Work Order', 'Client', 'Revenue', 'Status', 'Issue Date'],
